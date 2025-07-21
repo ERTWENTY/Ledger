@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract Ledger is Ownable {
+    // Struct for Transaction
+    struct Transaction {
+        uint256 id;
+        address sender; // From account
+        address receiver; // To account
+        uint256 amount; // Amount in wei or custom unit
+        string description; // Purpose or note (e.g., "Payment for services")
+        string dataHash; // Optional IPFS hash for detailed data
+        uint256 timestamp; // Unix timestamp
+    }
+
+    // Struct for Authorized Accountant
+    struct Accountant {
+        address accountantAddress;
+        string name; // e.g., "Accounting Firm XYZ"
+        bool isAuthorized;
+    }
+
+    // Counters
+    uint256 private nextTransactionId = 1;
+
+    // Mappings
+    mapping(address => uint256) public balances; // Account balances
+    mapping(address => Transaction[]) public transactionHistory; // Account to list of transactions
+    mapping(address => Accountant) public accountants; // Authorized accountants
+
+    // Events
+    event AccountantAuthorized(address indexed accountant, string name);
+    event AccountantRevoked(address indexed accountant);
+    event TransactionRecorded(
+        uint256 indexed transactionId,
+        address indexed sender,
+        address indexed receiver,
+        uint256 amount,
+        string description,
+        string dataHash,
+        uint256 timestamp
+    );
+
+    constructor() Ownable(msg.sender) {}
+
+    // Modifier to restrict access to authorized accountants
+    modifier onlyAuthorizedAccountant() {
+        require(accountants[msg.sender].isAuthorized, "Not authorized accountant");
+        _;
+    }
+
+    // Authorize an accountant
+    function authorizeAccountant(address accountant, string memory name) external onlyOwner {
+        require(accountant != address(0), "Invalid address");
+        require(bytes(name).length > 0, "Name cannot be empty");
+        require(!accountants[accountant].isAuthorized, "Accountant already authorized");
+
+        accountants[accountant] = Accountant(accountant, name, true);
+        emit AccountantAuthorized(accountant, name);
+    }
+
+    // Revoke an accountant's authorization
+    function revokeAccountant(address accountant) external onlyOwner {
+        require(accountants[accountant].isAuthorized, "Accountant not authorized");
+        accountants[accountant].isAuthorized = false;
+        emit AccountantRevoked(accountant);
+    }
+
+    // Record a transaction
+    function recordTransaction(
+        address sender,
+        address receiver,
+        uint256 amount,
+        string memory description,
+        string memory dataHash
+    ) external onlyAuthorizedAccountant returns (uint256) {
+        require(sender != address(0) && receiver != address(0), "Invalid address");
+        require(amount > 0, "Amount must be greater than zero");
+        require(balances[sender] >= amount, "Insufficient balance");
+        require(bytes(description).length > 0, "Description cannot be empty");
+
+        // Update balances
+        balances[sender] -= amount;
+        balances[receiver] += amount;
+
+        // Record transaction
+        uint256 transactionId = nextTransactionId++;
+        Transaction memory txData = Transaction(
+            transactionId,
+            sender,
+            receiver,
+            amount,
+            description,
+            dataHash,
+            block.timestamp
+        );
+
+        // Store in transaction history for both sender and receiver
+        transactionHistory[sender].push(txData);
+        transactionHistory[receiver].push(txData);
+
+        emit TransactionRecorded(
+            transactionId,
+            sender,
+            receiver,
+            amount,
+            description,
+            dataHash,
+            block.timestamp
+        );
+        return transactionId;
+    }
+
+    // Deposit funds to an account (for testing or initializing balances)
+    function deposit(address account) external payable {
+        require(account != address(0), "Invalid address");
+        require(msg.value > 0, "Must deposit non-zero amount");
+
+        balances[account] += msg.value;
+    }
+
+    // Withdraw funds (for testing or balance adjustments)
+    function withdraw(uint256 amount) external {
+        require(amount > 0, "Must withdraw non-zero amount");
+        require(balances[msg.sender] >= amount, "Insufficient balance");
+
+        balances[msg.sender] -= amount;
+        payable(msg.sender).transfer(amount);
+    }
+
+    // Get account balance
+    function getBalance(address account) external view returns (uint256) {
+        return balances[account];
+    }
+
+    // Get transaction history for an account
+    function getTransactionHistory(address account)
+        external
+        view
+        returns (Transaction[] memory)
+    {
+        return transactionHistory[account];
+    }
+
+    // Get accountant details
+    function getAccountant(address accountant)
+        external
+        view
+        returns (string memory name, bool isAuthorized)
+    {
+        Accountant memory acc = accountants[accountant];
+        return (acc.name, acc.isAuthorized);
+    }
+}
