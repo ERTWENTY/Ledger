@@ -1,0 +1,251 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+import sqlite3
+from datetime import datetime
+import csv
+from cryptography.fernet import Fernet
+import os
+import pygame
+
+class LedgerApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Modified Ledger Software")
+        self.root.geometry("600x600")
+
+        # Initialize Pygame for sound
+        pygame.mixer.init()
+
+        # Initialize encryption
+        self.key_file = "key.key"
+        self.cipher = self.load_or_generate_key()
+
+        # Initialize SQLite database
+        self.conn = sqlite3.connect("ledger.db")
+        self.create_table()
+
+        # GUI Elements
+        tk.Label(root, text="Ledger Software", font=("Arial", 16, "bold")).pack(pady=10)
+
+        # Date input
+        tk.Label(root, text="Date (YYYY-MM-DD):", font=("Arial", 12)).pack()
+        self.date_entry = tk.Entry(root, font=("Arial", 12))
+        self.date_entry.pack(pady=5)
+        self.date_entry.insert(0, datetime.now().strftime("%Y-%m-%d"))
+
+        # Description input
+        tk.Label(root, text="Description:", font=("Arial", 12)).pack()
+        self.desc_entry = tk.Entry(root, font=("Arial", 12))
+        self.desc_entry.pack(pady=5)
+
+        # Amount input
+        tk.Label(root, text="Amount:", font=("Arial", 12)).pack()
+        self.amount_entry = tk.Entry(root, font=("Arial", 12))
+        self.amount_entry.pack(pady=5)
+
+        # Category selection
+        tk.Label(root, text="Category:", font=("Arial", 12)).pack()
+        self.category_var = tk.StringVar(value="Income")
+        ttk.Combobox(root, textvariable=self.category_var, values=["Income", "Food", "Transport", "Utilities", "Entertainment", "Other"], state="readonly").pack(pady=5)
+
+        # Balance display
+        self.balance_var = tk.StringVar(value="Balance: 0.00")
+        tk.Label(root, textvariable=self.balance_var, font=("Arial", 12)).pack(pady=10)
+
+        # Buttons
+        tk.Button(root, text="Save Transaction", command=self.save_transaction, font=("Arial", 12)).pack(pady=5)
+        tk.Button(root, text="View Transactions", command=self.view_transactions, font=("Arial", 12)).pack(pady=5)
+        tk.Button(root, text="Search Transactions", command=self.search_transactions, font=("Arial", 12)).pack(pady=5)
+        tk.Button(root, text="Export to CSV", command=self.export_to_csv, font=("Arial", 12)).pack(pady=5)
+
+        # Update balance
+        self.update_balance()
+
+    def load_or_generate_key(self):
+        if os.path.exists(self.key_file):
+            with open(self.key_file, "rb") as key_file:
+                key = key_file.read()
+        else:
+            key = Fernet.generate_key()
+            with open(self.key_file, "wb") as key_file:
+                key_file.write(key)
+        return Fernet(key)
+
+    def create_table(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                description TEXT NOT NULL,
+                amount REAL NOT NULL,
+                category TEXT NOT NULL
+            )
+        ''')
+        self.conn.commit()
+
+    def visual_feedback(self, success=True):
+        # Flash input fields for feedback
+        entries = [self.date_entry, self.desc_entry, self.amount_entry]
+        color = "green" if success else "red"
+        for _ in range(3):
+            for entry in entries:
+                entry.config(bg=color)
+            self.root.update()
+            self.root.after(100)
+            for entry in entries:
+                entry.config(bg="white")
+            self.root.update()
+            self.root.after(100)
+
+    def play_sound(self, type="success"):
+        try:
+            pygame.mixer.Sound("success.wav").play()
+        except:
+            pass  # Skip sound if file not found
+
+    def save_transaction(self):
+        date = self.date_entry.get().strip()
+        description = self.desc_entry.get().strip()
+        amount = self.amount_entry.get().strip()
+        category = self.category_var.get()
+
+        # Validation
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Error", "Invalid date format! Use YYYY-MM-DD.")
+            self.visual_feedback(success=False)
+            return
+
+        if not description or not amount:
+            messagebox.showerror("Error", "Description and amount are required!")
+            self.visual_feedback(success=False)
+            return
+
+        try:
+            amount = float(amount)
+        except ValueError:
+            messagebox.showerror("Error", "Amount must be a valid number!")
+            self.visual_feedback(success=False)
+            return
+
+        # Encrypt description
+        try:
+            encrypted_desc = self.cipher.encrypt(description.encode()).decode()
+        except Exception as e:
+            messagebox.showerror("Error", f"Encryption failed: {str(e)}")
+            self.visual_feedback(success=False)
+            return
+
+        # Save to database
+        cursor = self.conn.cursor()
+        cursor.execute("INSERT INTO transactions (date, description, amount, category) VALUES (?, ?, ?, ?)",
+                      (date, encrypted_desc, amount, category))
+        self.conn.commit()
+
+        messagebox.showinfo("Success", "Transaction saved successfully!")
+        self.visual_feedback(success=True)
+        self.play_sound()
+        self.date_entry.delete(0, tk.END)
+        self.date_entry.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self.desc_entry.delete(0, tk.END)
+        self.amount_entry.delete(0, tk.END)
+        self.update_balance()
+
+    def update_balance(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT amount, category FROM transactions")
+        balance = 0
+        for row in cursor.fetchall():
+            amount = row[0]
+            category = row[1]
+            balance += amount if category == "Income" else -amount
+        self.balance_var.set(f"Balance: {balance:.2f}")
+
+    def view_transactions(self):
+        window = tk.Toplevel(self.root)
+        window.title("Transaction History")
+        window.geometry("600x400")
+
+        tree = ttk.Treeview(window, columns=("ID", "Date", "Description", "Amount", "Category"), show="headings")
+        tree.heading("ID", text="ID")
+        tree.heading("Date", text="Date")
+        tree.heading("Description", text="Description")
+        tree.heading("Amount", text="Amount")
+        tree.heading("Category", text="Category")
+        tree.column("ID", width=50)
+        tree.column("Date", width=100)
+        tree.column("Description", width=200)
+        tree.column("Amount", width=100)
+        tree.column("Category", width=100)
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM transactions")
+        for row in cursor.fetchall():
+            try:
+                decrypted_desc = self.cipher.decrypt(row[2].encode()).decode()
+            except:
+                decrypted_desc = "Decryption Error"
+            tree.insert("", tk.END, values=(row[0], row[1], decrypted_desc, f"{row[3]:.2f}", row[4]))
+
+    def search_transactions(self):
+        window = tk.Toplevel(self.root)
+        window.title("Search Transactions")
+        window.geometry("600x400")
+
+        tk.Label(window, text="Search by Date (YYYY-MM-DD) or Category:", font=("Arial", 12)).pack(pady=5)
+        search_entry = tk.Entry(window, font=("Arial", 12))
+        search_entry.pack(pady=5)
+        tk.Button(window, text="Search", command=lambda: self.perform_search(search_entry.get(), window), font=("Arial", 12)).pack(pady=5)
+
+        tree = ttk.Treeview(window, columns=("ID", "Date", "Description", "Amount", "Category"), show="headings")
+        tree.heading("ID", text="ID")
+        tree.heading("Date", text="Date")
+        tree.heading("Description", text="Description")
+        tree.heading("Amount", text="Amount")
+        tree.heading("Category", text="Category")
+        tree.column("ID", width=50)
+        tree.column("Date", width=100)
+        tree.column("Description", width=200)
+        tree.column("Amount", width=100)
+        tree.column("Category", width=100)
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tree = tree
+
+    def perform_search(self, search_term, window):
+        self.tree.delete(*self.tree.get_children())
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM transactions WHERE date LIKE ? OR category LIKE ?",
+                       (f"%{search_term}%", f"%{search_term}%"))
+        for row in cursor.fetchall():
+            try:
+                decrypted_desc = self.cipher.decrypt(row[2].encode()).decode()
+            except:
+                decrypted_desc = "Decryption Error"
+            self.tree.insert("", tk.END, values=(row[0], row[1], decrypted_desc, f"{row[3]:.2f}", row[4]))
+
+    def export_to_csv(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM transactions")
+        with open("ledger_export.csv", "w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["ID", "Date", "Description", "Amount", "Category"])
+            for row in cursor.fetchall():
+                try:
+                    decrypted_desc = self.cipher.decrypt(row[2].encode()).decode()
+                except:
+                    decrypted_desc = "Decryption Error"
+                writer.writerow([row[0], row[1], decrypted_desc, row[3], row[4]])
+        messagebox.showinfo("Success", "Transactions exported to ledger_export.csv!")
+        self.visual_feedback(success=True)
+        self.play_sound()
+
+    def __del__(self):
+        self.conn.close()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = LedgerApp(root)
+    root.mainloop()
