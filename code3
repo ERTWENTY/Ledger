@@ -1,0 +1,35 @@
+  def perform_search(self, search_term, window):
+        self.tree.delete(*self.tree.get_children())
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM transactions WHERE date LIKE ? OR category LIKE ?",
+                       (f"%{search_term}%", f"%{search_term}%"))
+        for row in cursor.fetchall():
+            try:
+                decrypted_desc = self.cipher.decrypt(row[2].encode()).decode()
+            except:
+                decrypted_desc = "Decryption Error"
+            self.tree.insert("", tk.END, values=(row[0], row[1], decrypted_desc, f"{row[3]:.2f}", row[4]))
+
+    def export_to_csv(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM transactions")
+        with open("ledger_export.csv", "w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["ID", "Date", "Description", "Amount", "Category"])
+            for row in cursor.fetchall():
+                try:
+                    decrypted_desc = self.cipher.decrypt(row[2].encode()).decode()
+                except:
+                    decrypted_desc = "Decryption Error"
+                writer.writerow([row[0], row[1], decrypted_desc, row[3], row[4]])
+        messagebox.showinfo("Success", "Transactions exported to ledger_export.csv!")
+        self.visual_feedback(success=True)
+        self.play_sound()
+
+    def __del__(self):
+        self.conn.close()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = LedgerApp(root)
+    root.mainloop()
