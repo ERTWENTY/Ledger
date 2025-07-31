@@ -1,0 +1,19 @@
+   // Get transaction history for an account
+    function getTransactionHistory(address account)
+        external
+        view
+        returns (Transaction[] memory)
+    {
+        return transactionHistory[account];
+    }
+
+    // Get accountant details
+    function getAccountant(address accountant)
+        external
+        view
+        returns (string memory name, bool isAuthorized)
+    {
+        Accountant memory acc = accountants[accountant];
+        return (acc.name, acc.isAuthorized);
+    }
+}
