@@ -1,0 +1,10 @@
+// Withdraw funds (for testing or balance adjustments)
+    function withdraw(uint256 amount) external {
+        require(amount > 0, "Must withdraw non-zero amount");
+        require(balances[msg.sender] >= amount, "Insufficient balance");
+
+        balances[msg.sender] -= amount;
+        payable(msg.sender).transfer(amount);
+    }
+
+    // Get account balance
